@@ -1,92 +1,77 @@
 import AbstractSource from './abstract.js'
-import { parseNyaaFeed, episodePatterns, batchPatterns, convertSizeToBytes } from './utils.js'
 
-const QUALITIES = ['2160', '1080', '720', '540', '480']
+export default new class NyaaSi extends AbstractSource {
+  base = 'https://torrent-search-api-livid.vercel.app/api/nyaasi/'
 
-export default new class Nyaa extends AbstractSource {
-    url = atob('aHR0cHM6Ly9ueWFhLnNpLz9wYWdlPXJzcw==')
+  /** @type {import('./').SearchFunction} */
+  async single({ titles, episode }) {
+    if (!titles?.length) return []
 
-    /**
-     * @param {string[]} titles
-     * @param {Object} params
-     * @param {string} [params.resolution]
-     * @param {string[]} [params.exclusions]
-     * @param {number} [params.episode]
-     * @param {number} [params.episodeCount]
-     * @param {boolean} [batch=false]
-     * @returns {string}
-     */
-    #buildQuery(titles, { resolution, exclusions, episode, episodeCount }, batch = false) {
-        const queryParts = [
-            `(${titles.join(')|(')})`,
-            episodeCount > 1 ? batch ? batchPatterns(episodeCount).join("|") : episodePatterns(episode).join('|') : '',
-            resolution ? `-(${QUALITIES.filter(q => q !== resolution).join('|')})` : '',
-            exclusions?.length ? `-(${exclusions.join('|')})` : ''
-        ]
-        return `&c=1_0&f=0&s=seeders&o=desc&q=${queryParts.join('')}`
+    const query = this.buildQuery(titles[0], episode)
+    const url = `${this.base}${encodeURIComponent(query)}`
+
+    const res = await fetch(url)
+    const data = await res.json()
+
+    if (!Array.isArray(data)) return []
+
+    return this.map(data)
+  }
+
+  /** @type {import('./').SearchFunction} */
+  batch = this.single
+  movie = this.single
+
+  buildQuery(title, episode) {
+    let query = title.replace(/[^\w\s-]/g, ' ').trim()
+    if (episode) query += ` ${episode.toString().padStart(2, '0')}`
+    return query
+  }
+
+  map(data) {
+    return data.map(item => {
+      const hash = item.Magnet?.match(/btih:([a-fA-F0-9]+)/)?.[1] || ''
+
+      return {
+        title: item.Name || '',
+        link: item.Magnet || '',
+        hash,
+        seeders: parseInt(item.Seeders || '0'),
+        leechers: parseInt(item.Leechers || '0'),
+        downloads: parseInt(item.Downloads || '0'),
+        size: this.parseSize(item.Size),
+        date: new Date(item.DateUploaded),
+        verified: false,
+        type: 'alt',
+        accuracy: 'medium'
+      }
+    })
+  }
+
+  parseSize(sizeStr) {
+    const match = sizeStr.match(/([\d.]+)\s*(KiB|MiB|GiB|KB|MB|GB)/i)
+    if (!match) return 0
+
+    const value = parseFloat(match[1])
+    const unit = match[2].toUpperCase()
+
+    switch (unit) {
+      case 'KIB':
+      case 'KB': return value * 1024
+      case 'MIB':
+      case 'MB': return value * 1024 * 1024
+      case 'GIB':
+      case 'GB': return value * 1024 * 1024 * 1024
+      default: return 0
     }
+  }
 
-    /**
-     * @param {import('./types').Nyaa[]} nodes
-     * @param {boolean} batch
-     * @returns {import('./').TorrentResult[]}
-     **/
-    map (nodes, batch = false) {
-        return nodes.map(item => {
-            return {
-                title: item.title,
-                link: item.link,
-                hash: item['nyaa:infoHash'],
-                seeders: Number(item['nyaa:seeders']),
-                leechers: Number(item['nyaa:leechers']),
-                downloads: Number(item['nyaa:downloads']),
-                size: convertSizeToBytes(item['nyaa:size']),
-                accuracy: (item['nyaa:trusted'] === 'Yes' || item['nyaa:remake'] === 'Yes') ? 'medium' : 'low',
-                type: batch ? 'batch' : undefined,
-                date: item.pubDate ? new Date(item.pubDate) : undefined
-            }
-        })
+  async test() {
+    try {
+      const res = await fetch(this.base + 'one piece')
+      return res.ok
+    } catch {
+      return false
     }
-
-    /**
-     * @param {string[]} titles
-     * @param {{ resolution?: string, exclusions?: string[], episodeCount?: number }} options
-     * @param {boolean} [batch=false]
-     * @returns {Promise<import('./').TorrentResult[]>}
-     */
-    async #query(titles, { resolution, exclusions, episode, episodeCount }, batch = false) {
-        const query = this.#buildQuery(titles, { resolution, exclusions, episode, episodeCount }, batch)
-        const res = await fetch(this.url + query)
-        if (res?.ok) {
-            const xml = await res.text()
-
-            /** @type {import('./types').Nyaa[]} */
-            const data = [...parseNyaaFeed(xml)]
-            return this.map(data, batch)
-        }
-        return []
-    }
-
-    /** @type {import('./').SearchFunction} */
-    async single ({ anilistId, episode, episodeCount, titles, exclusions, resolution }) {
-        return this.#query(titles, { resolution, exclusions, episode, episodeCount })
-    }
-
-    /** @type {import('./').SearchFunction} */
-    async batch ({ anilistId, episode, episodeCount, titles, exclusions, resolution }) {
-        return this.#query(titles, { resolution, exclusions, episode, episodeCount }, true)
-    }
-
-    /** @type {import('./').SearchFunction} */
-    async movie (opts) {
-        return [] // not really applicable for this type of search
-    }
-
-    /**
-     * Checks if the source URL is reachable.
-     * @returns {() => Promise<boolean>} True if fetch succeeds.
-     */
-    async validate () {
-        return (await fetch(this.url))?.ok
-    }
+  }
 }()
