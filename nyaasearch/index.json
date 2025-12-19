@@ -4,7 +4,7 @@
     "name": "Nyaa",
     "version": "0.0.2",
     "main": "sources/nyaa",
-    "update": "gh:Spithskia/Shiru-Extensions/nyaasearch",
+    "update": "gh:YanamiRei/Shiru-Extensions/nyaasearch",
     "type": "torrent",
     "speed": "slow",
     "accuracy": "medium",
